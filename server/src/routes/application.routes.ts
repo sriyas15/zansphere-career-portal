@@ -234,8 +234,6 @@ router.post('/:id/submit', async (req: AuthRequest, res: Response) => {
     }
 
     try {
-      // Update portal application only — Zanpeople candidate stays as 'APPLIED'
-      // until HR manually changes it via the Zanpeople dashboard
       await prisma.portalApplication.update({
         where: { id },
         data: {
@@ -245,19 +243,65 @@ router.post('/:id/submit', async (req: AuthRequest, res: Response) => {
         },
       });
 
+      if (app.candidateId) {
+        // Change candidate status from DRAFT to APPLIED
+        await prisma.$queryRawUnsafe(`
+          UPDATE candidates
+          SET status = 'APPLIED', position_applied = $1, updated_at = NOW()
+          WHERE id = $2::uuid
+        `, app.roleOfInterest || 'General', app.candidateId);
+
+        // Check if roleOfInterest is a valid UUID (meaning they selected a real Job Opening)
+        const isUUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(app.roleOfInterest || '');
+        if (isUUID) {
+          try {
+            // Check if application already exists to avoid unique constraint violation
+            const existingApp: any[] = await prisma.$queryRawUnsafe(`
+              SELECT id FROM candidate_applications 
+              WHERE candidate_id = $1::uuid AND job_opening_id = $2::uuid
+            `, app.candidateId, app.roleOfInterest);
+
+            if (existingApp.length === 0) {
+              // Get the first stage of the job opening's pipeline
+              const job: any[] = await prisma.$queryRawUnsafe(`
+                SELECT template_id FROM job_openings WHERE id = $1::uuid
+              `, app.roleOfInterest);
+
+              let firstStageId = null;
+              if (job.length > 0) {
+                const firstStage: any[] = await prisma.$queryRawUnsafe(`
+                  SELECT id FROM pipeline_stages 
+                  WHERE template_id = $1::uuid 
+                  ORDER BY stage_order ASC LIMIT 1
+                `, job[0].template_id);
+                if (firstStage.length > 0) firstStageId = firstStage[0].id;
+              }
+
+              // Create candidate_applications with current_stage_id
+              const newApp: any[] = await prisma.$queryRawUnsafe(`
+                INSERT INTO candidate_applications (id, candidate_id, job_opening_id, current_stage_id, status, applied_at, updated_at)
+                VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, 'IN_PIPELINE', NOW(), NOW())
+                RETURNING id
+              `, app.candidateId, app.roleOfInterest, firstStageId);
+
+              // Initialize pipeline stage_progress
+              if (firstStageId && newApp.length > 0) {
+                await prisma.$queryRawUnsafe(`
+                  INSERT INTO stage_progress (id, application_id, stage_id, status, decision, entered_at)
+                  VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'IN_PROGRESS', 'PENDING', NOW())
+                `, newApp[0].id, firstStageId);
+              }
+            }
+          } catch (e) {
+            console.error('Failed to link candidate to job opening pipeline:', e);
+          }
+        }
+      }
+
       res.json({ message: 'Application submitted successfully! Your profile has been finalized.' });
     } catch (dbErr) {
       console.error('Candidate submission error:', dbErr);
-      // Still mark as submitted even if Zanpeople integration fails
-      await prisma.portalApplication.update({
-        where: { id },
-        data: {
-          status: 'SUBMITTED',
-          submittedAt: new Date(),
-          dpdpConsent: true,
-        },
-      });
-      res.json({ message: 'Application submitted successfully!' });
+      res.status(500).json({ error: 'Failed to submit application.' });
     }
   } catch (err) {
     console.error('Submit application error:', err);

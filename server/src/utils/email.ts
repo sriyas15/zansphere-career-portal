@@ -20,7 +20,7 @@ export async function sendOtpEmail(to: string, otp: string, purpose: 'verificati
   const html = `
     <div style="font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; max-width: 520px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
       <div style="background: #ffffff; padding: 32px 40px; text-align: center;">
-        <img src="cid:zansphere-logo" alt="Zansphere Logo" style="height: 180px; margin-bottom: 12px; background-color: #ffffff; border-radius: 8px; padding: 8px;" />
+        <img src="cid:zansphere-logo" alt="Zansphere Logo" style="height: 100px; margin-bottom: 12px; background-color: #000000; border-radius: 8px; padding: 8px;" />
         <p style="color: rgba(0,0,0,0.5); margin: 0; font-size: 12px; letter-spacing: 2px;">CAREER PORTAL</p>
       </div>
       <div style="padding: 40px;">
@@ -29,8 +29,8 @@ export async function sendOtpEmail(to: string, otp: string, purpose: 'verificati
         </h2>
         <p style="color: #555; margin: 0 0 28px; font-size: 14px; line-height: 1.6;">
           ${purpose === 'verification'
-            ? 'Use the OTP below to complete your registration. This code is valid for <strong>10 minutes</strong>.'
-            : 'Use the OTP below to reset your password. This code is valid for <strong>10 minutes</strong>.'}
+      ? 'Use the OTP below to complete your registration. This code is valid for <strong>10 minutes</strong>.'
+      : 'Use the OTP below to reset your password. This code is valid for <strong>10 minutes</strong>.'}
         </p>
         <div style="background: #f5f5f5; border: 2px dashed #ddd; border-radius: 8px; padding: 20px; text-align: center; margin: 0 0 28px;">
           <span style="font-size: 36px; font-weight: 800; letter-spacing: 10px; color: #000;">${otp}</span>

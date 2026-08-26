@@ -227,7 +227,7 @@ router.post('/verify-otp', otpLimiter, async (req: Request, res: Response) => {
             ) VALUES (
               gen_random_uuid(), $1, $2, $3, $4, '', '', 'India',
               $5, 0, null, 'Immediate',
-              null, null, null, 'APPLIED', NOW(), NOW()
+              null, null, null, 'DRAFT', NOW(), NOW()
             )
             RETURNING id
           `,

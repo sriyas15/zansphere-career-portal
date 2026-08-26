@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
+import api from '../../services/api';
 
 export default function StepPreferences({ application, saving, onNext, onPrev }) {
   const [form, setForm] = useState({
@@ -9,6 +10,25 @@ export default function StepPreferences({ application, saving, onNext, onPrev })
     roleOfInterest: application.roleOfInterest || '',
     subscribeJobAlerts: application.subscribeJobAlerts !== false,
   });
+
+  const [jobs, setJobs] = useState([]);
+  const [loadingJobs, setLoadingJobs] = useState(true);
+
+  useEffect(() => {
+    const fetchJobs = async () => {
+      try {
+        const res = await api.get('/jobs');
+        if (res.data && res.data.jobs) {
+          setJobs(res.data.jobs);
+        }
+      } catch (err) {
+        console.error('Failed to fetch jobs', err);
+      } finally {
+        setLoadingJobs(false);
+      }
+    };
+    fetchJobs();
+  }, []);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -52,18 +72,13 @@ export default function StepPreferences({ application, saving, onNext, onPrev })
           </div>
           <div className="form-group">
             <label className="form-label">Job Preference <span className="required">*</span></label>
-            <select name="roleOfInterest" className="form-input form-select" value={form.roleOfInterest} onChange={handleChange} required>
-              <option value="" disabled>Select Role</option>
-              <option value="Frontend Developer">Frontend Developer</option>
-              <option value="Backend Developer">Backend Developer</option>
-              <option value="Full Stack Developer">Full Stack Developer</option>
-              <option value="UI/UX Designer">UI/UX Designer</option>
-              <option value="Product Manager">Product Manager</option>
-              <option value="Data Scientist">Data Scientist</option>
-              <option value="Marketing Specialist">Marketing Specialist</option>
-              <option value="QA Engineer">QA Engineer</option>
-              <option value="DevOps Engineer">DevOps Engineer</option>
-              <option value="Other">Other</option>
+            <select name="roleOfInterest" className="form-input form-select" value={form.roleOfInterest} onChange={handleChange} required disabled={loadingJobs}>
+              <option value="" disabled>{loadingJobs ? 'Loading roles...' : 'Select Role'}</option>
+              {jobs.map(job => (
+                <option key={job.id} value={job.id}>
+                  {job.title} {job.departmentName ? `(${job.departmentName})` : ''}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -80,7 +95,7 @@ export default function StepPreferences({ application, saving, onNext, onPrev })
         <button type="button" className="btn btn-secondary" onClick={onPrev}>
           <ArrowLeft size={16} /> Previous
         </button>
-        <button type="submit" className="btn btn-primary" disabled={saving}>
+        <button type="submit" className="btn btn-primary" disabled={saving || loadingJobs}>
           {saving ? <div className="spinner" /> : <>Save & Continue <ArrowRight size={16} /></>}
         </button>
       </div>
