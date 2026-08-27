@@ -173,10 +173,10 @@ export default function Register() {
                 type="tel"
                 name="phone"
                 className="form-input with-icon"
-                placeholder="+91XXXXXXXXXX"
+                placeholder="9943XXXXXX"
                 value={form.phone}
                 onChange={handleChange}
-                maxLength={15}
+                maxLength={10}
                 required
               />
             </div>

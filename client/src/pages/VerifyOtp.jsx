@@ -78,8 +78,8 @@ export default function VerifyOtp() {
 
       if (purpose === 'EMAIL_VERIFICATION' && res.data.token) {
         login(res.data.token, res.data.user);
-        // Navigate directly to the application process
-        navigate('/apply');
+        // Navigate directly to the profile setup
+        navigate('/profile-setup');
       } else if (purpose === 'PASSWORD_RESET') {
         navigate('/reset-password', { state: { email, otpVerified: true } });
       }

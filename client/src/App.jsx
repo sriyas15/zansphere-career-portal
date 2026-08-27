@@ -9,8 +9,9 @@ import VerifyOtp from './pages/VerifyOtp';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
-import ApplicationForm from './pages/ApplicationForm';
+import ProfileForm from './pages/ProfileForm';
 import Settings from './pages/Settings';
+import Jobs from './pages/Jobs';
 import './index.css';
 
 function App() {
@@ -51,8 +52,8 @@ function App() {
 
           {/* Protected Routes */}
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/apply" element={<ProtectedRoute><ApplicationForm /></ProtectedRoute>} />
-          <Route path="/apply/:applicationId" element={<ProtectedRoute><ApplicationForm /></ProtectedRoute>} />
+          <Route path="/jobs" element={<ProtectedRoute><Jobs /></ProtectedRoute>} />
+          <Route path="/profile-setup" element={<ProtectedRoute><ProfileForm /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
 
           {/* Default redirect */}
