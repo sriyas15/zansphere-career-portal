@@ -1,324 +1,44 @@
 import { Router, Response } from 'express';
 import prisma from '../config/db';
 import { authMiddleware, AuthRequest } from '../middleware/auth.middleware';
+import crypto from 'crypto';
 
 const router = Router();
-
-// All application routes require authentication
 router.use(authMiddleware);
 
-// ── POST /api/applications ─ Create or get draft application ──
-router.post('/', async (req: AuthRequest, res: Response) => {
+// Generate a random 8-char short ID for job applications
+function generateShortId(): string {
+  return crypto.randomBytes(4).toString('hex').toUpperCase();
+}
+
+// ── GET /api/applications/jobs ─ Get all available jobs ──────────
+router.get('/jobs', async (req: AuthRequest, res: Response) => {
   try {
-    // With the new workflow, application is created at signup.
-    // This route can be used to get the draft or create one if it somehow doesn't exist.
-    let existing = await prisma.portalApplication.findFirst({
-      where: { userId: req.userId },
-      include: { employmentHistory: true },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    if (existing) {
-      res.json({ application: existing, isExisting: true });
-      return;
-    }
-
-    // Pre-fill from user profile
-    const user = await prisma.portalUser.findUnique({ where: { id: req.userId } });
-    if (!user) {
-      res.status(404).json({ error: 'User not found.' });
-      return;
-    }
-
-    const application = await prisma.portalApplication.create({
-      data: {
-        userId: req.userId!,
-        fullName: `${user.firstName} ${user.lastName}`,
-        email: user.email,
-        phone: user.phone,
-        dateOfBirth: new Date('2000-01-01'), // placeholder, user will update
-        city: '',
-        state: '',
-        employmentStatus: 'FRESHER',
-        currentCompany: '',
-        currentDesignation: '',
-        totalExperienceYears: 0,
-        totalExperienceMonths: 0,
-        relevantExperienceYears: 0,
-        relevantExperienceMonths: 0,
-        noticePeriod: 'Immediate',
-        highestQualification: 'UG',
-        institution: '',
-        degreeSpecialization: '',
-        yearOfPassing: new Date().getFullYear(),
-        percentageOrCgpa: '',
-        preferredJobType: 'FULL_TIME',
-        preferredWorkMode: 'ON_SITE',
-        preferredDepartment: '',
-        currentStep: 1,
-        status: 'DRAFT',
-      },
-      include: { employmentHistory: true },
-    });
-
-    res.status(201).json({ application, isExisting: false });
+    const jobs = await prisma.$queryRawUnsafe(`
+      SELECT 
+        j.id, j.title, j.description, j.vacancies, j.status,
+        d.name as department_name
+      FROM job_openings j
+      LEFT JOIN departments d ON j.department_id = d.id
+      WHERE j.status = 'OPEN'
+      ORDER BY j.created_at DESC
+    `);
+    res.json({ jobs });
   } catch (err) {
-    console.error('Create application error:', err);
-    res.status(500).json({ error: 'Failed to create application.' });
-  }
-});
-
-// ── PUT /api/applications/:id/step/:step ─ Save a step ───────
-router.put('/:id/step/:step', async (req: AuthRequest, res: Response) => {
-  try {
-    const { id, step } = req.params;
-    const stepNum = parseInt(step);
-
-    // Verify ownership
-    const app = await prisma.portalApplication.findFirst({
-      where: { id, userId: req.userId },
-    });
-
-    if (!app) {
-      res.status(404).json({ error: 'Application not found.' });
-      return;
-    }
-
-    const data: any = { ...req.body };
-    
-    // Handle employment history separately (Step 2)
-    if (stepNum === 2 && data.employmentHistory) {
-      const historyEntries = data.employmentHistory;
-      delete data.employmentHistory;
-
-      // Delete existing and re-create
-      await prisma.employmentHistoryEntry.deleteMany({
-        where: { applicationId: id },
-      });
-
-      if (historyEntries.length > 0) {
-        await prisma.employmentHistoryEntry.createMany({
-          data: historyEntries.map((entry: any) => ({
-            applicationId: id,
-            company: entry.company,
-            role: entry.role,
-            durationFrom: entry.durationFrom,
-            durationTo: entry.durationTo,
-          })),
-        });
-      }
-    }
-
-    // Clean up non-model fields
-    delete data.id;
-    delete data.userId;
-    delete data.createdAt;
-    delete data.updatedAt;
-    delete data.submittedAt;
-    delete data.candidateId;
-
-    // Handle decimal fields
-    if (data.currentCtcFixed !== undefined) {
-      data.currentCtcFixed = data.currentCtcFixed ? parseFloat(data.currentCtcFixed) : null;
-    }
-    if (data.currentCtcVariable !== undefined) {
-      data.currentCtcVariable = data.currentCtcVariable ? parseFloat(data.currentCtcVariable) : null;
-    }
-    if (data.expectedCtc !== undefined) {
-      data.expectedCtc = data.expectedCtc ? parseFloat(data.expectedCtc) : null;
-    }
-
-    // Handle date field
-    if (data.dateOfBirth) {
-      data.dateOfBirth = new Date(data.dateOfBirth);
-    }
-
-    // Handle numeric fields
-    if (data.totalExperienceYears !== undefined) data.totalExperienceYears = parseInt(data.totalExperienceYears) || 0;
-    if (data.totalExperienceMonths !== undefined) data.totalExperienceMonths = parseInt(data.totalExperienceMonths) || 0;
-    if (data.relevantExperienceYears !== undefined) data.relevantExperienceYears = parseInt(data.relevantExperienceYears) || 0;
-    if (data.relevantExperienceMonths !== undefined) data.relevantExperienceMonths = parseInt(data.relevantExperienceMonths) || 0;
-    if (data.yearOfPassing !== undefined) data.yearOfPassing = parseInt(data.yearOfPassing) || new Date().getFullYear();
-
-    // Update current step (only advance, don't go back)
-    if (stepNum >= (app.currentStep || 1)) {
-      data.currentStep = stepNum + 1;
-    }
-
-    const updated = await prisma.portalApplication.update({
-      where: { id },
-      data,
-      include: { employmentHistory: true },
-    });
-
-    // Update Zanpeople candidates table and Profile if step 1
-    if (updated.candidateId) {
-      try {
-        await prisma.$queryRawUnsafe(`
-          UPDATE candidates SET
-            city = $1, state = $2,
-            years_experience = $3::numeric, current_company = $4, notice_period = $5,
-            current_salary = $6::numeric, expected_salary = $7::numeric,
-            linkedin_url = $8, github_url = $9, portfolio_url = $10,
-            updated_at = NOW()
-          WHERE id = $11::uuid
-        `,
-          updated.city || '',
-          updated.state || '',
-          (updated.totalExperienceYears || 0) + ((updated.totalExperienceMonths || 0) / 12),
-          updated.currentCompany || null,
-          updated.noticePeriod || 'Immediate',
-          updated.currentCtcFixed ? Number(updated.currentCtcFixed) : null,
-          updated.expectedCtc ? Number(updated.expectedCtc) : null,
-          updated.linkedinUrl || null,
-          updated.githubUrl || null,
-          updated.portfolioUrl || null,
-          updated.candidateId
-        );
-      } catch (e) {
-        console.error('Failed to update Zanpeople candidate:', e);
-      }
-    }
-
-    if (stepNum === 1) {
-      // Sync back to Profile (User) and Candidate Name/Phone
-      const parts = (updated.fullName || '').trim().split(/\s+/);
-      const firstName = parts[0] || '';
-      const lastName = parts.slice(1).join(' ') || '';
-
-      await prisma.portalUser.update({
-        where: { id: req.userId },
-        data: { firstName, lastName, phone: updated.phone },
-      });
-
-      if (updated.candidateId) {
-        await prisma.$queryRawUnsafe(`
-          UPDATE candidates 
-          SET name = $1, phone = $2, updated_at = NOW()
-          WHERE id = $3::uuid
-        `, (updated.fullName || '').trim(), updated.phone, updated.candidateId);
-      }
-    }
-
-    res.json({ message: 'Step saved successfully!', application: updated });
-  } catch (err) {
-    console.error('Save step error:', err);
-    res.status(500).json({ error: 'Failed to save step data.' });
-  }
-});
-
-// ── POST /api/applications/:id/submit ─ Submit application ───
-router.post('/:id/submit', async (req: AuthRequest, res: Response) => {
-  try {
-    const { id } = req.params;
-
-    const app = await prisma.portalApplication.findFirst({
-      where: { id, userId: req.userId },
-      include: { employmentHistory: true },
-    });
-
-    if (!app) {
-      res.status(404).json({ error: 'Application not found.' });
-      return;
-    }
-
-    if (app.status === 'SUBMITTED') {
-      res.status(400).json({ error: 'Application has already been submitted.' });
-      return;
-    }
-
-    // Verify consent
-    if (!req.body.dpdpConsent) {
-      res.status(400).json({ error: 'You must agree to the Privacy Policy to submit.' });
-      return;
-    }
-
-    try {
-      await prisma.portalApplication.update({
-        where: { id },
-        data: {
-          status: 'SUBMITTED',
-          submittedAt: new Date(),
-          dpdpConsent: true,
-        },
-      });
-
-      if (app.candidateId) {
-        // Change candidate status from DRAFT to APPLIED
-        await prisma.$queryRawUnsafe(`
-          UPDATE candidates
-          SET status = 'APPLIED', position_applied = $1, updated_at = NOW()
-          WHERE id = $2::uuid
-        `, app.roleOfInterest || 'General', app.candidateId);
-
-        // Check if roleOfInterest is a valid UUID (meaning they selected a real Job Opening)
-        const isUUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(app.roleOfInterest || '');
-        if (isUUID) {
-          try {
-            // Check if application already exists to avoid unique constraint violation
-            const existingApp: any[] = await prisma.$queryRawUnsafe(`
-              SELECT id FROM candidate_applications 
-              WHERE candidate_id = $1::uuid AND job_opening_id = $2::uuid
-            `, app.candidateId, app.roleOfInterest);
-
-            if (existingApp.length === 0) {
-              // Get the first stage of the job opening's pipeline
-              const job: any[] = await prisma.$queryRawUnsafe(`
-                SELECT template_id FROM job_openings WHERE id = $1::uuid
-              `, app.roleOfInterest);
-
-              let firstStageId = null;
-              if (job.length > 0) {
-                const firstStage: any[] = await prisma.$queryRawUnsafe(`
-                  SELECT id FROM pipeline_stages 
-                  WHERE template_id = $1::uuid 
-                  ORDER BY stage_order ASC LIMIT 1
-                `, job[0].template_id);
-                if (firstStage.length > 0) firstStageId = firstStage[0].id;
-              }
-
-              // Create candidate_applications with current_stage_id
-              const newApp: any[] = await prisma.$queryRawUnsafe(`
-                INSERT INTO candidate_applications (id, candidate_id, job_opening_id, current_stage_id, status, applied_at, updated_at)
-                VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, 'IN_PIPELINE', NOW(), NOW())
-                RETURNING id
-              `, app.candidateId, app.roleOfInterest, firstStageId);
-
-              // Initialize pipeline stage_progress
-              if (firstStageId && newApp.length > 0) {
-                await prisma.$queryRawUnsafe(`
-                  INSERT INTO stage_progress (id, application_id, stage_id, status, decision, entered_at)
-                  VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'IN_PROGRESS', 'PENDING', NOW())
-                `, newApp[0].id, firstStageId);
-              }
-            }
-          } catch (e) {
-            console.error('Failed to link candidate to job opening pipeline:', e);
-          }
-        }
-      }
-
-      res.json({ message: 'Application submitted successfully! Your profile has been finalized.' });
-    } catch (dbErr) {
-      console.error('Candidate submission error:', dbErr);
-      res.status(500).json({ error: 'Failed to submit application.' });
-    }
-  } catch (err) {
-    console.error('Submit application error:', err);
-    res.status(500).json({ error: 'Failed to submit application.' });
+    console.error('Get jobs error:', err);
+    res.status(500).json({ error: 'Failed to fetch jobs.' });
   }
 });
 
 // ── GET /api/applications ─ Get all my applications ──────────
 router.get('/', async (req: AuthRequest, res: Response) => {
   try {
-    const applications = await prisma.portalApplication.findMany({
+    const applications = await prisma.portalJobApplication.findMany({
       where: { userId: req.userId },
-      include: { employmentHistory: true },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { appliedAt: 'desc' },
     });
 
-    // Fetch Zanpeople status for each application if available
+    // Fetch Zanpeople status for each application
     const enriched = await Promise.all(
       applications.map(async (app) => {
         try {
@@ -334,17 +54,11 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 
           return {
             ...app,
-            jobTitle: app.roleOfInterest || 'General Application',
-            departmentName: app.preferredDepartment || '',
-            designationName: app.roleOfInterest || '',
             zanpeopleStatus,
           };
         } catch {
           return {
             ...app,
-            jobTitle: app.roleOfInterest || 'General Application',
-            departmentName: '',
-            designationName: '',
             zanpeopleStatus: null,
           };
         }
@@ -358,105 +72,153 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   }
 });
 
-// ── GET /api/applications/:id ─ Get single application ───────
-router.get('/:id', async (req: AuthRequest, res: Response) => {
+// ── POST /api/applications/general ─ Submit a general application ──
+router.post('/general', async (req: AuthRequest, res: Response) => {
   try {
-    const application = await prisma.portalApplication.findFirst({
-      where: { id: req.params.id, userId: req.userId },
-      include: { employmentHistory: true },
+    const profile = await prisma.portalProfile.findUnique({
+      where: { userId: req.userId },
     });
 
-    if (!application) {
-      res.status(404).json({ error: 'Application not found.' });
+    if (!profile || !profile.isComplete) {
+      res.status(400).json({ error: 'Please complete your profile before applying.' });
       return;
     }
 
-    res.json({ application });
-  } catch (err) {
-    console.error('Get application error:', err);
-    res.status(500).json({ error: 'Failed to fetch application.' });
-  }
-});
-
-// ── PUT /api/applications/:id ─ Update submitted application ─
-router.put('/:id', async (req: AuthRequest, res: Response) => {
-  try {
-    const { id } = req.params;
-
-    const app = await prisma.portalApplication.findFirst({
-      where: { id, userId: req.userId },
+    // Check if a general application already exists for this user
+    const existingApp = await prisma.portalJobApplication.findFirst({
+      where: { userId: req.userId, jobId: null }
     });
 
-    if (!app) {
-      res.status(404).json({ error: 'Application not found.' });
+    if (existingApp) {
+      res.status(400).json({ error: 'You have already submitted a general application.' });
       return;
     }
 
-    const data: any = { ...req.body };
+    if (!profile.zanpeopleId) {
+      res.status(500).json({ error: 'No Zanpeople Candidate linked to this profile.' });
+      return;
+    }
 
-    // Handle employment history
-    if (data.employmentHistory) {
-      const historyEntries = data.employmentHistory;
-      delete data.employmentHistory;
+    const positionApplied = profile.roleOfInterest || profile.preferredDepartment || 'General Application';
 
-      await prisma.employmentHistoryEntry.deleteMany({
-        where: { applicationId: id },
-      });
+    // Update existing candidate status to APPLIED
+    await prisma.$executeRawUnsafe(`
+      UPDATE candidates
+      SET position_applied = $1, status = 'APPLIED', updated_at = NOW()
+      WHERE id = $2::uuid
+    `, positionApplied, profile.zanpeopleId);
 
-      if (historyEntries.length > 0) {
-        await prisma.employmentHistoryEntry.createMany({
-          data: historyEntries.map((entry: any) => ({
-            applicationId: id,
-            company: entry.company,
-            role: entry.role,
-            durationFrom: entry.durationFrom,
-            durationTo: entry.durationTo,
-          })),
-        });
+    const candidateId = profile.zanpeopleId;
+
+    // Create Job Application locally
+    const application = await prisma.portalJobApplication.create({
+      data: {
+        shortId: generateShortId(),
+        userId: req.userId!,
+        jobId: null,
+        jobTitle: positionApplied,
+        candidateId,
+        status: 'SUBMITTED',
       }
-    }
-
-    // Clean up
-    delete data.id;
-    delete data.userId;
-    delete data.jobId;
-    delete data.createdAt;
-    delete data.updatedAt;
-    delete data.submittedAt;
-    delete data.candidateId;
-    delete data.status;
-
-    // Handle type conversions
-    if (data.dateOfBirth) data.dateOfBirth = new Date(data.dateOfBirth);
-    if (data.currentCtcFixed !== undefined) data.currentCtcFixed = data.currentCtcFixed ? parseFloat(data.currentCtcFixed) : null;
-    if (data.currentCtcVariable !== undefined) data.currentCtcVariable = data.currentCtcVariable ? parseFloat(data.currentCtcVariable) : null;
-    if (data.expectedCtc !== undefined) data.expectedCtc = data.expectedCtc ? parseFloat(data.expectedCtc) : null;
-    if (data.totalExperienceYears !== undefined) data.totalExperienceYears = parseInt(data.totalExperienceYears) || 0;
-    if (data.totalExperienceMonths !== undefined) data.totalExperienceMonths = parseInt(data.totalExperienceMonths) || 0;
-    if (data.relevantExperienceYears !== undefined) data.relevantExperienceYears = parseInt(data.relevantExperienceYears) || 0;
-    if (data.relevantExperienceMonths !== undefined) data.relevantExperienceMonths = parseInt(data.relevantExperienceMonths) || 0;
-    if (data.yearOfPassing !== undefined) data.yearOfPassing = parseInt(data.yearOfPassing) || new Date().getFullYear();
-
-    const updated = await prisma.portalApplication.update({
-      where: { id },
-      data,
-      include: { employmentHistory: true },
     });
 
-    res.json({ message: 'Application updated successfully!', application: updated });
+    res.status(201).json({ message: 'General application submitted successfully!', application });
   } catch (err) {
-    console.error('Update application error:', err);
-    res.status(500).json({ error: 'Failed to update application.' });
+    console.error('Submit general application error:', err);
+    res.status(500).json({ error: 'Failed to submit application.' });
   }
 });
 
-function generatePublicToken(): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  for (let i = 0; i < 32; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+
+// ── POST /api/applications/:jobId ─ Submit to a specific job ──
+router.post('/:jobId', async (req: AuthRequest, res: Response) => {
+  try {
+    const { jobId } = req.params;
+
+    const profile = await prisma.portalProfile.findUnique({
+      where: { userId: req.userId },
+    });
+
+    if (!profile || !profile.isComplete) {
+      res.status(400).json({ error: 'Please complete your profile before applying.' });
+      return;
+    }
+
+    // Check if the job exists and is open
+    const jobResult: any[] = await prisma.$queryRawUnsafe(`
+      SELECT id, title, template_id FROM job_openings WHERE id = $1::uuid AND status = 'OPEN'
+    `, jobId);
+
+    if (jobResult.length === 0) {
+      res.status(404).json({ error: 'Job not found or is no longer open.' });
+      return;
+    }
+
+    const job = jobResult[0];
+
+    // Check if they already applied to this job
+    const existingApp = await prisma.portalJobApplication.findFirst({
+      where: { userId: req.userId, jobId }
+    });
+
+    if (existingApp) {
+      res.status(400).json({ error: 'You have already applied for this position.' });
+      return;
+    }
+
+    if (!profile.zanpeopleId) {
+      res.status(500).json({ error: 'No Zanpeople Candidate linked to this profile.' });
+      return;
+    }
+
+    // Update existing candidate status to APPLIED
+    await prisma.$executeRawUnsafe(`
+      UPDATE candidates
+      SET position_applied = $1, status = 'APPLIED', updated_at = NOW()
+      WHERE id = $2::uuid
+    `, job.title, profile.zanpeopleId);
+
+    const candidateId = profile.zanpeopleId;
+
+    // Link the candidate to the job opening's pipeline
+    const firstStageResult: any[] = await prisma.$queryRawUnsafe(`
+      SELECT id FROM pipeline_stages 
+      WHERE template_id = $1::uuid 
+      ORDER BY stage_order ASC LIMIT 1
+    `, job.template_id);
+
+    const firstStageId = firstStageResult[0]?.id;
+
+    const pipelineApp: any[] = await prisma.$queryRawUnsafe(`
+      INSERT INTO candidate_applications (id, candidate_id, job_opening_id, current_stage_id, status, applied_at, updated_at)
+      VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, 'IN_PIPELINE', NOW(), NOW())
+      RETURNING id
+    `, candidateId, jobId, firstStageId || null);
+
+    if (firstStageId && pipelineApp.length > 0) {
+      await prisma.$queryRawUnsafe(`
+        INSERT INTO stage_progress (id, application_id, stage_id, status, decision, entered_at)
+        VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'IN_PROGRESS', 'PENDING', NOW())
+      `, pipelineApp[0].id, firstStageId);
+    }
+
+    // Create local Job Application record
+    const application = await prisma.portalJobApplication.create({
+      data: {
+        shortId: generateShortId(),
+        userId: req.userId!,
+        jobId,
+        jobTitle: job.title,
+        candidateId,
+        status: 'SUBMITTED',
+      }
+    });
+
+    res.status(201).json({ message: 'Application submitted successfully!', application });
+  } catch (err) {
+    console.error('Submit application error:', err);
+    res.status(500).json({ error: 'Failed to submit application.' });
   }
-  return result;
-}
+});
 
 export default router;

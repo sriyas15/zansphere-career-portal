@@ -21,12 +21,12 @@ async function main() {
 
   try {
     // We delete in reverse order of dependencies to avoid foreign key constraint errors
-    
+
     // 1. Delete employment history
     await deleteSafely(prisma.employmentHistoryEntry, 'employment history entries');
 
     // 2. Delete applications
-    await deleteSafely(prisma.portalApplication, 'applications');
+    await deleteSafely(prisma.portalProfile, 'Portal Profiles');
 
     // 3. Delete OTPs
     await deleteSafely(prisma.otp, 'OTP records');

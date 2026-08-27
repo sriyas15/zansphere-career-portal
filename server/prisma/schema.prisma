@@ -647,7 +647,8 @@ model PortalUser {
 
   // Relations
   otps         Otp[]
-  applications PortalApplication[]
+  profile      PortalProfile?
+  applications PortalJobApplication[]
 
   @@index([email])
   @@map("portal_users")
@@ -670,12 +671,12 @@ model Otp {
   @@map("portal_otps")
 }
 
-// ═══ Portal Applications (Full Candidate Profile) ══════════════
+// ═══ Portal Profile (Candidate Base Info) ══════════════════════
 
-model PortalApplication {
-  id        String                  @id @default(uuid()) @db.Uuid
-  userId    String                  @map("user_id") @db.Uuid
-  status    PortalApplicationStatus @default(DRAFT)
+model PortalProfile {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @map("user_id") @db.Uuid
+  zanpeopleId String? @map("zanpeople_id") @db.Uuid // Links to Zanpeople candidates table
 
   // Step 1: Personal Details
   fullName        String    @map("full_name") @db.VarChar(200)
@@ -700,12 +701,7 @@ model PortalApplication {
   expectedCtc       Decimal?      @map("expected_ctc") @db.Decimal(12, 2)
   noticePeriod      String        @map("notice_period") @db.VarChar(50)
 
-  // Step 3: Education
-  highestQualification QualificationLevel @map("highest_qualification")
-  institution          String             @db.VarChar(300)
-  degreeSpecialization String             @map("degree_specialization") @db.VarChar(300)
-  yearOfPassing        Int                @map("year_of_passing")
-  percentageOrCgpa     String             @map("percentage_or_cgpa") @db.VarChar(20)
+  // Step 3: Education is now in PortalEducationHistory
 
   // Step 4: Skills (stored as JSON for flexibility)
   skills Json? @db.JsonB
@@ -731,33 +727,64 @@ model PortalApplication {
 
   // Metadata
   currentStep   Int      @default(1) @map("current_step")
-  submittedAt   DateTime? @map("submitted_at") @db.Timestamptz
-  candidateId   String?  @map("candidate_id") @db.Uuid // Links to Zanpeople candidates table after submission
+  isComplete    Boolean  @default(false) @map("is_complete")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
   user              PortalUser              @relation(fields: [userId], references: [id], onDelete: Cascade)
   employmentHistory EmploymentHistoryEntry[]
+  educationHistory  PortalEducationHistory[]
 
-  @@index([status])
-  @@index([userId])
-  @@map("portal_applications")
+  @@map("portal_profiles")
 }
 
-// ═══ Employment History Entries ════════════════════════════════
+// ═══ Job Applications (Link Profile to Jobs) ═══════════════════
+
+model PortalJobApplication {
+  id             String            @id @default(uuid()) @db.Uuid
+  shortId        String            @unique @map("short_id") @db.VarChar(12)
+  userId         String            @map("user_id") @db.Uuid
+  jobId          String?           @map("job_id") @db.Uuid // Null if general application
+  jobTitle       String            @map("job_title") @db.VarChar(200) // snapshot
+  candidateId    String            @map("candidate_id") @db.Uuid // Links to Zanpeople candidates table
+  status         PortalApplicationStatus @default(SUBMITTED)
+  appliedAt      DateTime          @default(now()) @map("applied_at") @db.Timestamptz
+
+  user PortalUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("portal_job_applications")
+}
+
+// ═══ Employment & Education History ════════════════════════════
 
 model EmploymentHistoryEntry {
   id            String @id @default(uuid()) @db.Uuid
-  applicationId String @map("application_id") @db.Uuid
+  profileId     String @map("profile_id") @db.Uuid
   company       String @db.VarChar(200)
   role          String @db.VarChar(200)
-  durationFrom  String @map("duration_from") @db.VarChar(20) // e.g. "2020-01"
-  durationTo    String @map("duration_to") @db.VarChar(20)   // e.g. "2023-06" or "Present"
+  durationFrom  String @map("duration_from") @db.VarChar(20) 
+  durationTo    String @map("duration_to") @db.VarChar(20)   
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  application PortalApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  profile PortalProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
-  @@index([applicationId])
+  @@index([profileId])
   @@map("portal_employment_history")
+}
+
+model PortalEducationHistory {
+  id                   String @id @default(uuid()) @db.Uuid
+  profileId            String @map("profile_id") @db.Uuid
+  institution          String @db.VarChar(300)
+  degreeSpecialization String @map("degree_specialization") @db.VarChar(300)
+  yearOfPassing        Int    @map("year_of_passing")
+  percentageOrCgpa     String @map("percentage_or_cgpa") @db.VarChar(20)
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  profile PortalProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+  @@map("portal_education_history")
 }

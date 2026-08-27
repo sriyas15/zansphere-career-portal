@@ -8,6 +8,7 @@ import { sendOtpEmail, generateOtp } from '../utils/email';
 import { upload, s3Client } from './upload.routes';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import path from 'path';
+import crypto from 'crypto';
 
 const router = Router();
 
@@ -80,7 +81,7 @@ router.post('/register', authLimiter, upload.single('resume'), async (req: Reque
     // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Create user and application draft in a transaction
+    // Create user and profile draft in a transaction
     const user = await prisma.$transaction(async (tx) => {
       const newUser = await tx.portalUser.create({
         data: {
@@ -93,7 +94,7 @@ router.post('/register', authLimiter, upload.single('resume'), async (req: Reque
         },
       });
 
-      await tx.portalApplication.create({
+      await tx.portalProfile.create({
         data: {
           userId: newUser.id,
           fullName: `${firstName} ${lastName}`,
@@ -110,11 +111,6 @@ router.post('/register', authLimiter, upload.single('resume'), async (req: Reque
           relevantExperienceYears: 0,
           relevantExperienceMonths: 0,
           noticePeriod: 'Immediate',
-          highestQualification: 'UG',
-          institution: '',
-          degreeSpecialization: '',
-          yearOfPassing: new Date().getFullYear(),
-          percentageOrCgpa: '',
           preferredJobType: 'FULL_TIME',
           preferredWorkMode: 'ON_SITE',
           preferredDepartment: departmentOfInterest || '',
@@ -122,7 +118,7 @@ router.post('/register', authLimiter, upload.single('resume'), async (req: Reque
           resumeUrl,
           resumeFileName: req.file!.originalname,
           currentStep: 1,
-          status: 'DRAFT',
+          isComplete: false,
         },
       });
 
@@ -207,48 +203,24 @@ router.post('/verify-otp', otpLimiter, async (req: Request, res: Response) => {
         data: { status: 'VERIFIED' },
       });
 
-      // Find the application draft
-      const app = await prisma.portalApplication.findFirst({
+      // Restore old logic: Create a DRAFT candidate in Zanpeople immediately
+      const profile = await prisma.portalProfile.findUnique({
         where: { userId: user.id },
       });
 
-      if (app && !app.candidateId) {
-        // Create candidate in Zanpeople's candidates table
-        const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-        let publicToken = '';
-        for (let i = 0; i < 32; i++) publicToken += chars.charAt(Math.floor(Math.random() * chars.length));
+      if (profile && !profile.zanpeopleId) {
+        const publicToken = crypto.randomBytes(16).toString('hex');
+        const newCandidateId = crypto.randomUUID();
+        
+        await prisma.$executeRawUnsafe(`
+          INSERT INTO candidates (id, public_token, name, email, phone, position_applied, status, created_at, updated_at)
+          VALUES ($1::uuid, $2, $3, $4, $5, $6, 'DRAFT', NOW(), NOW())
+        `, newCandidateId, publicToken, profile.fullName, profile.email, profile.phone, 'General Application');
 
-        try {
-          const candidateResult: any[] = await prisma.$queryRawUnsafe(`
-            INSERT INTO candidates (
-              id, public_token, name, email, phone, city, state, country,
-              position_applied, years_experience, current_company, notice_period,
-              linkedin_url, github_url, portfolio_url, status, created_at, updated_at
-            ) VALUES (
-              gen_random_uuid(), $1, $2, $3, $4, '', '', 'India',
-              $5, 0, null, 'Immediate',
-              null, null, null, 'DRAFT', NOW(), NOW()
-            )
-            RETURNING id
-          `,
-            publicToken,
-            app.fullName,
-            app.email,
-            app.phone,
-            app.roleOfInterest || app.preferredDepartment || 'General'
-          );
-
-          const candidateId = candidateResult[0]?.id;
-
-          if (candidateId) {
-            await prisma.portalApplication.update({
-              where: { id: app.id },
-              data: { candidateId },
-            });
-          }
-        } catch (dbErr) {
-          console.error('Candidate creation error on verify OTP:', dbErr);
-        }
+        await prisma.portalProfile.update({
+          where: { id: profile.id },
+          data: { zanpeopleId: newCandidateId },
+        });
       }
 
       const token = generateToken(user.id, user.email);
