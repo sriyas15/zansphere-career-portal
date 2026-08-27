@@ -38,19 +38,32 @@ export default function Navbar() {
         {user && (
           <>
             <div className={`navbar-links ${menuOpen ? 'open' : ''}`}>
-              <Link
-                to="/dashboard"
-                className={`nav-link ${isActive('/dashboard') ? 'active' : ''}`}
-                onClick={() => setMenuOpen(false)}
-              >
-                <LayoutDashboard size={16} />
-                <span>Dashboard</span>
-              </Link>
+              {!isActive('/profile-setup') && (
+                <>
+                  <Link
+                    to="/dashboard"
+                    className={`nav-link ${isActive('/dashboard') ? 'active' : ''}`}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <LayoutDashboard size={16} />
+                    <span>Dashboard</span>
+                  </Link>
+                  <Link
+                    to="/jobs"
+                    className={`nav-link ${isActive('/jobs') ? 'active' : ''}`}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <Briefcase size={16} />
+                    <span>Jobs</span>
+                  </Link>
+                </>
+              )}
               <div className="nav-user-container">
                 <button
                   className="nav-user"
                   onClick={() => setDropdownOpen(!dropdownOpen)}
                   onBlur={() => setTimeout(() => setDropdownOpen(false), 200)}
+                  style={{ cursor: 'pointer' }}
                 >
                   <div className="nav-user-avatar">
                     {user.firstName?.[0]}{user.lastName?.[0]}
@@ -63,9 +76,16 @@ export default function Navbar() {
 
                 {dropdownOpen && (
                   <div className="nav-dropdown">
-                    <Link to="/settings" className="dropdown-item">
-                      <Settings size={14} /> Settings
-                    </Link>
+                    {!isActive('/profile-setup') && (
+                      <>
+                        <Link to="/profile-setup" className="dropdown-item">
+                          <User size={14} /> Profile
+                        </Link>
+                        <Link to="/settings" className="dropdown-item">
+                          <Settings size={14} /> Settings
+                        </Link>
+                      </>
+                    )}
                     <button className="dropdown-item text-error" onClick={handleLogout}>
                       <LogOut size={14} /> Logout
                     </button>
