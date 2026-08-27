@@ -13,6 +13,8 @@ export default function StepPreferences({ application, saving, onNext, onPrev })
 
   const [jobs, setJobs] = useState([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
+  const [isOtherRole, setIsOtherRole] = useState(false);
+  const [otherRoleValue, setOtherRoleValue] = useState('');
 
   useEffect(() => {
     const fetchJobs = async () => {
@@ -20,6 +22,13 @@ export default function StepPreferences({ application, saving, onNext, onPrev })
         const res = await api.get('/jobs');
         if (res.data && res.data.jobs) {
           setJobs(res.data.jobs);
+          
+          // Check if current roleOfInterest is not in the jobs list
+          if (application.roleOfInterest && !res.data.jobs.find(j => j.id === application.roleOfInterest || j.title === application.roleOfInterest)) {
+            setIsOtherRole(true);
+            setOtherRoleValue(application.roleOfInterest);
+            setForm(prev => ({ ...prev, roleOfInterest: 'OTHER' }));
+          }
         }
       } catch (err) {
         console.error('Failed to fetch jobs', err);
@@ -28,16 +37,37 @@ export default function StepPreferences({ application, saving, onNext, onPrev })
       }
     };
     fetchJobs();
-  }, []);
+  }, [application.roleOfInterest]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setForm({ ...form, [name]: type === 'checkbox' ? checked : value });
+    
+    if (name === 'roleOfInterest') {
+      if (value === 'OTHER') {
+        setIsOtherRole(true);
+        setForm({ ...form, roleOfInterest: 'OTHER' });
+      } else {
+        setIsOtherRole(false);
+        setForm({ ...form, roleOfInterest: value });
+      }
+    } else {
+      setForm({ ...form, [name]: type === 'checkbox' ? checked : value });
+    }
+  };
+
+  const handleOtherRoleChange = (e) => {
+    setOtherRoleValue(e.target.value);
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onNext(form);
+    
+    const submissionData = { ...form };
+    if (isOtherRole) {
+      submissionData.roleOfInterest = otherRoleValue;
+    }
+    
+    onNext(submissionData);
   };
 
   return (
@@ -75,11 +105,25 @@ export default function StepPreferences({ application, saving, onNext, onPrev })
             <select name="roleOfInterest" className="form-input form-select" value={form.roleOfInterest} onChange={handleChange} required disabled={loadingJobs}>
               <option value="" disabled>{loadingJobs ? 'Loading roles...' : 'Select Role'}</option>
               {jobs.map(job => (
-                <option key={job.id} value={job.id}>
+                <option key={job.id} value={job.title}>
                   {job.title} {job.departmentName ? `(${job.departmentName})` : ''}
                 </option>
               ))}
+              <option value="OTHER">Other (Please specify)</option>
             </select>
+            
+            {isOtherRole && (
+              <input 
+                type="text" 
+                className="form-input" 
+                placeholder="Type your desired role..." 
+                value={otherRoleValue} 
+                onChange={handleOtherRoleChange} 
+                maxLength={100} 
+                required 
+                style={{ marginTop: '8px' }}
+              />
+            )}
           </div>
         </div>
 
@@ -95,7 +139,7 @@ export default function StepPreferences({ application, saving, onNext, onPrev })
         <button type="button" className="btn btn-secondary" onClick={onPrev}>
           <ArrowLeft size={16} /> Previous
         </button>
-        <button type="submit" className="btn btn-primary" disabled={saving || loadingJobs}>
+        <button type="submit" className="btn btn-primary" disabled={saving || loadingJobs || (isOtherRole && !otherRoleValue.trim())}>
           {saving ? <div className="spinner" /> : <>Save & Continue <ArrowRight size={16} /></>}
         </button>
       </div>

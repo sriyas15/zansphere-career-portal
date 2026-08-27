@@ -73,11 +73,18 @@ export default function StepReview({ application, saving, onPrev, onSubmit, onGo
       </ReviewSection>
 
       <ReviewSection title="3. Education" stepNum={3}>
-        <Row label="Qualification" value={QUAL_LABELS[application.highestQualification]} />
-        <Row label="Institution" value={application.institution} />
-        <Row label="Degree" value={application.degreeSpecialization} />
-        <Row label="Year of Passing" value={application.yearOfPassing} />
-        <Row label="Score" value={application.percentageOrCgpa} />
+        {application.educationHistory?.length > 0 ? (
+          application.educationHistory.map((edu, i) => (
+            <div key={i} style={{ padding: '8px 0', borderBottom: i < application.educationHistory.length - 1 ? '1px solid rgba(255,255,255,0.03)' : 'none' }}>
+              <Row label="Institution" value={edu.institution} />
+              <Row label="Degree" value={edu.degreeSpecialization} />
+              <Row label="Year of Passing" value={edu.yearOfPassing} />
+              <Row label="Score" value={edu.percentageOrCgpa} />
+            </div>
+          ))
+        ) : (
+          <Row label="Education" value="Not provided" />
+        )}
       </ReviewSection>
 
       <ReviewSection title="4. Skills" stepNum={4}>
