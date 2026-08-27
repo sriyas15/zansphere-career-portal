@@ -10,7 +10,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     // We query the Zanpeople job_openings table directly (shared DB)
     // Using raw query to access Zanpeople's tables
-    let whereClause = `WHERE jo.status = 'OPEN'`;
+    let whereClause = `WHERE jo.status = 'OPEN' AND jo.title != 'General Applications'`;
     const params: any[] = [];
     let paramIndex = 1;
 

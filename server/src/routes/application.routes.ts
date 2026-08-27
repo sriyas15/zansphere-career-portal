@@ -20,7 +20,7 @@ router.get('/jobs', async (req: AuthRequest, res: Response) => {
         d.name as department_name
       FROM job_openings j
       LEFT JOIN departments d ON j.department_id = d.id
-      WHERE j.status = 'OPEN'
+      WHERE j.status = 'OPEN' AND j.title != 'General Applications'
       ORDER BY j.created_at DESC
     `);
     res.json({ jobs });
@@ -109,6 +109,43 @@ router.post('/general', async (req: AuthRequest, res: Response) => {
     `, positionApplied, profile.zanpeopleId);
 
     const candidateId = profile.zanpeopleId;
+
+    // Check if "General Applications" job exists
+    const genJobResult: any[] = await prisma.$queryRawUnsafe(`
+      SELECT id, template_id FROM job_openings WHERE title = 'General Applications' AND status = 'OPEN' LIMIT 1
+    `);
+
+    if (genJobResult.length > 0) {
+      const job = genJobResult[0];
+
+      // Check if already in candidate_applications for this job
+      const existingPipelineApp: any[] = await prisma.$queryRawUnsafe(`
+        SELECT id FROM candidate_applications WHERE candidate_id = $1::uuid AND job_opening_id = $2::uuid
+      `, candidateId, job.id);
+
+      if (existingPipelineApp.length === 0) {
+        const firstStageResult: any[] = await prisma.$queryRawUnsafe(`
+          SELECT id FROM pipeline_stages 
+          WHERE template_id = $1::uuid 
+          ORDER BY stage_order ASC LIMIT 1
+        `, job.template_id);
+
+        const firstStageId = firstStageResult[0]?.id;
+
+        const pipelineApp: any[] = await prisma.$queryRawUnsafe(`
+          INSERT INTO candidate_applications (id, candidate_id, job_opening_id, current_stage_id, status, applied_at, updated_at)
+          VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, 'IN_PIPELINE', NOW(), NOW())
+          RETURNING id
+        `, candidateId, job.id, firstStageId || null);
+
+        if (firstStageId && pipelineApp.length > 0) {
+          await prisma.$queryRawUnsafe(`
+            INSERT INTO stage_progress (id, application_id, stage_id, status, decision, entered_at)
+            VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'IN_PROGRESS', 'PENDING', NOW())
+          `, pipelineApp[0].id, firstStageId);
+        }
+      }
+    }
 
     // Create Job Application locally
     const application = await prisma.portalJobApplication.create({
