@@ -239,6 +239,13 @@ router.post('/:jobId', async (req: AuthRequest, res: Response) => {
       `, pipelineApp[0].id, firstStageId);
     }
 
+
+    // Create Notification in Zanpeople
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO notifications (id, type, message, reference_type, reference_id, is_read, created_at)
+      VALUES (gen_random_uuid(), 'CANDIDATE_ADDED', $1, 'CANDIDATE', $2::uuid, false, NOW())
+    `, `New application received for ${job.title} from ${profile.fullName}`, candidateId);
+
     // Create local Job Application record
     const application = await prisma.portalJobApplication.create({
       data: {

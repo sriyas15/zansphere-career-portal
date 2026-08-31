@@ -20,7 +20,11 @@ export default function Register() {
   const navigate = useNavigate();
 
   const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+    let value = e.target.value;
+    if (e.target.name === 'firstName' || e.target.name === 'lastName') {
+      value = value.replace(/\s/g, '');
+    }
+    setForm({ ...form, [e.target.name]: value });
   };
 
   const handleFileChange = (e) => {

@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 export const registerSchema = z.object({
-  firstName: z.string().min(1, 'First name is required').max(100).trim(),
-  lastName: z.string().min(1, 'Last name is required').max(100).trim(),
+  firstName: z.string().min(1, 'First name is required').max(100).trim().regex(/^\S+$/, 'First name cannot contain spaces'),
+  lastName: z.string().min(1, 'Last name is required').max(100).trim().regex(/^\S+$/, 'Last name cannot contain spaces'),
   email: z.string().email('Invalid email address').max(255).trim().toLowerCase(),
   password: z.string()
     .min(8, 'Password must be at least 8 characters')
@@ -58,7 +58,7 @@ export const changePasswordSchema = z.object({
 });
 
 export const updateProfileSchema = z.object({
-  firstName: z.string().min(1).max(100).trim().optional(),
-  lastName: z.string().min(1).max(100).trim().optional(),
+  firstName: z.string().min(1).max(100).trim().regex(/^\S+$/, 'First name cannot contain spaces').optional(),
+  lastName: z.string().min(1).max(100).trim().regex(/^\S+$/, 'Last name cannot contain spaces').optional(),
   phone: z.string().min(10).max(15).regex(/^\+?[0-9]+$/).optional(),
 });
