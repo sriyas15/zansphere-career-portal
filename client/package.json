@@ -22,6 +22,7 @@
     "@testing-library/user-event": "^14.6.6",
     "@types/jest": "^30.0.0",
     "babel-jest": "^30.5.0",
+    "babel-plugin-dynamic-import-node": "^2.3.3",
     "babel-plugin-transform-vite-meta-env": "^1.0.3",
     "cross-env": "^10.1.0",
     "identity-obj-proxy": "^3.0.0",

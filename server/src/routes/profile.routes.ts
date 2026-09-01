@@ -45,23 +45,26 @@ router.put('/', async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const updatedProfile = await prisma.portalProfile.update({
-      where: { id: profile.id },
-      data: { fullName, phone },
-    });
+    const [updatedProfile, updatedUser] = await prisma.$transaction(async (tx) => {
+      const p = await tx.portalProfile.update({
+        where: { id: profile.id },
+        data: { fullName, phone },
+      });
 
-    const updatedUser = await prisma.portalUser.update({
-      where: { id: req.userId },
-      data: { firstName, lastName, phone },
-    });
+      const u = await tx.portalUser.update({
+        where: { id: req.userId },
+        data: { firstName, lastName, phone },
+      });
 
-    if (updatedProfile.zanpeopleId) {
-      await prisma.$executeRawUnsafe(`
-        UPDATE candidates 
-        SET name = $1, phone = $2, updated_at = NOW()
-        WHERE id = $3::uuid
-      `, fullName, phone, updatedProfile.zanpeopleId);
-    }
+      if (p.zanpeopleId) {
+        await tx.$executeRawUnsafe(`
+          UPDATE candidates 
+          SET name = $1, phone = $2, updated_at = NOW()
+          WHERE id = $3::uuid
+        `, fullName, phone, p.zanpeopleId);
+      }
+      return [p, u];
+    });
 
     const userPayload = {
       id: updatedUser.id,
@@ -177,61 +180,64 @@ router.put('/step/:step', async (req: AuthRequest, res: Response) => {
         data.isComplete = true;
     }
 
-    const updated = await prisma.portalProfile.update({
-      where: { id: profile.id },
-      data,
-      include: { employmentHistory: true, educationHistory: true },
-    });
-
-    if (stepNum === 1) {
-      // Sync back to PortalUser
-      const parts = (updated.fullName || '').trim().split(/\s+/);
-      const firstName = parts[0] || '';
-      const lastName = parts.slice(1).join(' ') || '';
-
-      await prisma.portalUser.update({
-        where: { id: req.userId },
-        data: { firstName, lastName, phone: updated.phone },
+    const updated = await prisma.$transaction(async (tx) => {
+      const p = await tx.portalProfile.update({
+        where: { id: profile.id },
+        data,
+        include: { employmentHistory: true, educationHistory: true },
       });
-    }
 
-    // Sync to Zanpeople candidate if it exists
-    if (updated.zanpeopleId) {
-      const yearsExp = (updated.totalExperienceYears || 0) + ((updated.totalExperienceMonths || 0) / 12);
-      
-      await prisma.$executeRawUnsafe(`
-        UPDATE candidates 
-        SET 
-          name = $1,
-          phone = $2,
-          city = $3,
-          state = $4,
-          years_experience = $5,
-          current_company = $6,
-          notice_period = $7,
-          current_salary = $8,
-          expected_salary = $9,
-          linkedin_url = $10,
-          github_url = $11,
-          portfolio_url = $12,
-          updated_at = NOW()
-        WHERE id = $13::uuid
-      `, 
-        updated.fullName,
-        updated.phone,
-        updated.city || null,
-        updated.state || null,
-        yearsExp || null,
-        updated.currentCompany || null,
-        updated.noticePeriod || null,
-        updated.currentCtcFixed || null,
-        updated.expectedCtc || null,
-        updated.linkedinUrl || null,
-        updated.githubUrl || null,
-        updated.portfolioUrl || null,
-        updated.zanpeopleId
-      );
-    }
+      if (stepNum === 1) {
+        // Sync back to PortalUser
+        const parts = (p.fullName || '').trim().split(/\s+/);
+        const firstName = parts[0] || '';
+        const lastName = parts.slice(1).join(' ') || '';
+
+        await tx.portalUser.update({
+          where: { id: req.userId },
+          data: { firstName, lastName, phone: p.phone },
+        });
+      }
+
+      // Sync to Zanpeople candidate if it exists
+      if (p.zanpeopleId) {
+        const yearsExp = (p.totalExperienceYears || 0) + ((p.totalExperienceMonths || 0) / 12);
+        
+        await tx.$executeRawUnsafe(`
+          UPDATE candidates 
+          SET 
+            name = $1,
+            phone = $2,
+            city = $3,
+            state = $4,
+            years_experience = $5,
+            current_company = $6,
+            notice_period = $7,
+            current_salary = $8,
+            expected_salary = $9,
+            linkedin_url = $10,
+            github_url = $11,
+            portfolio_url = $12,
+            updated_at = NOW()
+          WHERE id = $13::uuid
+        `, 
+          p.fullName,
+          p.phone,
+          p.city || null,
+          p.state || null,
+          yearsExp || null,
+          p.currentCompany || null,
+          p.noticePeriod || null,
+          p.currentCtcFixed || null,
+          p.expectedCtc || null,
+          p.linkedinUrl || null,
+          p.githubUrl || null,
+          p.portfolioUrl || null,
+          p.zanpeopleId
+        );
+      }
+      return p;
+    });
 
     res.json({ message: 'Step saved successfully!', profile: updated });
   } catch (err) {
@@ -264,7 +270,7 @@ router.post('/change-password', async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const passwordHash = await bcrypt.hash(newPassword, 12);
+    const passwordHash = await bcrypt.hash(newPassword, 10);
     await prisma.portalUser.update({
       where: { id: req.userId },
       data: { passwordHash },

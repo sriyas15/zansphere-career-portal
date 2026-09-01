@@ -38,32 +38,31 @@ router.get('/', async (req: AuthRequest, res: Response) => {
       orderBy: { appliedAt: 'desc' },
     });
 
-    // Fetch Zanpeople status for each application
-    const enriched = await Promise.all(
-      applications.map(async (app) => {
-        try {
-          let zanpeopleStatus = null;
-          if (app.candidateId) {
-            const statusResult: any[] = await prisma.$queryRawUnsafe(`
-              SELECT status 
-              FROM candidates
-              WHERE id = $1::uuid
-            `, app.candidateId);
-            zanpeopleStatus = statusResult[0]?.status || null;
-          }
+    // Fetch Zanpeople status for all candidates in one query
+    const candidateIds = [...new Set(applications.map(app => app.candidateId).filter(Boolean))] as string[];
+    const statusesMap: Record<string, string> = {};
 
-          return {
-            ...app,
-            zanpeopleStatus,
-          };
-        } catch {
-          return {
-            ...app,
-            zanpeopleStatus: null,
-          };
-        }
-      })
-    );
+    if (candidateIds.length > 0) {
+      const placeholders = candidateIds.map((_, i) => `$${i + 1}::uuid`).join(', ');
+      try {
+        const statuses: any[] = await prisma.$queryRawUnsafe(`
+          SELECT id, status 
+          FROM candidates
+          WHERE id IN (${placeholders})
+        `, ...candidateIds);
+        
+        statuses.forEach(s => {
+          statusesMap[s.id] = s.status;
+        });
+      } catch (err) {
+        console.error('Failed to fetch candidate statuses in bulk', err);
+      }
+    }
+
+    const enriched = applications.map(app => ({
+      ...app,
+      zanpeopleStatus: app.candidateId ? (statusesMap[app.candidateId] || null) : null
+    }));
 
     res.json({ applications: enriched });
   } catch (err) {
@@ -101,51 +100,53 @@ router.post('/general', async (req: AuthRequest, res: Response) => {
 
     const positionApplied = profile.roleOfInterest || profile.preferredDepartment || 'General Application';
 
-    // Update existing candidate status to APPLIED
-    await prisma.$executeRawUnsafe(`
-      UPDATE candidates
-      SET position_applied = $1, status = 'APPLIED', updated_at = NOW()
-      WHERE id = $2::uuid
-    `, positionApplied, profile.zanpeopleId);
-
     const candidateId = profile.zanpeopleId;
 
-    // Check if "General Applications" job exists
-    const genJobResult: any[] = await prisma.$queryRawUnsafe(`
-      SELECT id, template_id FROM job_openings WHERE title = 'General Applications' AND status = 'OPEN' LIMIT 1
-    `);
+    await prisma.$transaction(async (tx) => {
+      // Update existing candidate status to APPLIED
+      await tx.$executeRawUnsafe(`
+        UPDATE candidates
+        SET position_applied = $1, status = 'APPLIED', updated_at = NOW()
+        WHERE id = $2::uuid
+      `, positionApplied, profile.zanpeopleId);
 
-    if (genJobResult.length > 0) {
-      const job = genJobResult[0];
+      // Check if "General Applications" job exists
+      const genJobResult: any[] = await tx.$queryRawUnsafe(`
+        SELECT id, template_id FROM job_openings WHERE title = 'General Applications' AND status = 'OPEN' LIMIT 1
+      `);
 
-      // Check if already in candidate_applications for this job
-      const existingPipelineApp: any[] = await prisma.$queryRawUnsafe(`
-        SELECT id FROM candidate_applications WHERE candidate_id = $1::uuid AND job_opening_id = $2::uuid
-      `, candidateId, job.id);
+      if (genJobResult.length > 0) {
+        const job = genJobResult[0];
 
-      if (existingPipelineApp.length === 0) {
-        const firstStageResult: any[] = await prisma.$queryRawUnsafe(`
-          SELECT id FROM pipeline_stages 
-          WHERE template_id = $1::uuid 
-          ORDER BY stage_order ASC LIMIT 1
-        `, job.template_id);
+        // Check if already in candidate_applications for this job
+        const existingPipelineApp: any[] = await tx.$queryRawUnsafe(`
+          SELECT id FROM candidate_applications WHERE candidate_id = $1::uuid AND job_opening_id = $2::uuid
+        `, candidateId, job.id);
 
-        const firstStageId = firstStageResult[0]?.id;
+        if (existingPipelineApp.length === 0) {
+          const firstStageResult: any[] = await tx.$queryRawUnsafe(`
+            SELECT id FROM pipeline_stages 
+            WHERE template_id = $1::uuid 
+            ORDER BY stage_order ASC LIMIT 1
+          `, job.template_id);
 
-        const pipelineApp: any[] = await prisma.$queryRawUnsafe(`
-          INSERT INTO candidate_applications (id, candidate_id, job_opening_id, current_stage_id, status, applied_at, updated_at)
-          VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, 'IN_PIPELINE', NOW(), NOW())
-          RETURNING id
-        `, candidateId, job.id, firstStageId || null);
+          const firstStageId = firstStageResult[0]?.id;
 
-        if (firstStageId && pipelineApp.length > 0) {
-          await prisma.$queryRawUnsafe(`
-            INSERT INTO stage_progress (id, application_id, stage_id, status, decision, entered_at)
-            VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'IN_PROGRESS', 'PENDING', NOW())
-          `, pipelineApp[0].id, firstStageId);
+          const pipelineApp: any[] = await tx.$queryRawUnsafe(`
+            INSERT INTO candidate_applications (id, candidate_id, job_opening_id, current_stage_id, status, applied_at, updated_at)
+            VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, 'IN_PIPELINE', NOW(), NOW())
+            RETURNING id
+          `, candidateId, job.id, firstStageId || null);
+
+          if (firstStageId && pipelineApp.length > 0) {
+            await tx.$queryRawUnsafe(`
+              INSERT INTO stage_progress (id, application_id, stage_id, status, decision, entered_at)
+              VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'IN_PROGRESS', 'PENDING', NOW())
+            `, pipelineApp[0].id, firstStageId);
+          }
         }
       }
-    }
+    });
 
     // Create Job Application locally
     const application = await prisma.portalJobApplication.create({
@@ -208,43 +209,45 @@ router.post('/:jobId', async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    // Update existing candidate status to APPLIED
-    await prisma.$executeRawUnsafe(`
-      UPDATE candidates
-      SET position_applied = $1, status = 'APPLIED', updated_at = NOW()
-      WHERE id = $2::uuid
-    `, job.title, profile.zanpeopleId);
-
     const candidateId = profile.zanpeopleId;
 
-    // Link the candidate to the job opening's pipeline
-    const firstStageResult: any[] = await prisma.$queryRawUnsafe(`
-      SELECT id FROM pipeline_stages 
-      WHERE template_id = $1::uuid 
-      ORDER BY stage_order ASC LIMIT 1
-    `, job.template_id);
+    // Use a single transaction for the writes
+    await prisma.$transaction(async (tx) => {
+      // Update existing candidate status to APPLIED
+      await tx.$executeRawUnsafe(`
+        UPDATE candidates
+        SET position_applied = $1, status = 'APPLIED', updated_at = NOW()
+        WHERE id = $2::uuid
+      `, job.title, profile.zanpeopleId);
 
-    const firstStageId = firstStageResult[0]?.id;
+      // Link the candidate to the job opening's pipeline
+      const firstStageResult: any[] = await tx.$queryRawUnsafe(`
+        SELECT id FROM pipeline_stages 
+        WHERE template_id = $1::uuid 
+        ORDER BY stage_order ASC LIMIT 1
+      `, job.template_id);
 
-    const pipelineApp: any[] = await prisma.$queryRawUnsafe(`
-      INSERT INTO candidate_applications (id, candidate_id, job_opening_id, current_stage_id, status, applied_at, updated_at)
-      VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, 'IN_PIPELINE', NOW(), NOW())
-      RETURNING id
-    `, candidateId, jobId, firstStageId || null);
+      const firstStageId = firstStageResult[0]?.id;
 
-    if (firstStageId && pipelineApp.length > 0) {
-      await prisma.$queryRawUnsafe(`
-        INSERT INTO stage_progress (id, application_id, stage_id, status, decision, entered_at)
-        VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'IN_PROGRESS', 'PENDING', NOW())
-      `, pipelineApp[0].id, firstStageId);
-    }
+      const pipelineApp: any[] = await tx.$queryRawUnsafe(`
+        INSERT INTO candidate_applications (id, candidate_id, job_opening_id, current_stage_id, status, applied_at, updated_at)
+        VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, 'IN_PIPELINE', NOW(), NOW())
+        RETURNING id
+      `, candidateId, jobId, firstStageId || null);
 
+      if (firstStageId && pipelineApp.length > 0) {
+        await tx.$queryRawUnsafe(`
+          INSERT INTO stage_progress (id, application_id, stage_id, status, decision, entered_at)
+          VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'IN_PROGRESS', 'PENDING', NOW())
+        `, pipelineApp[0].id, firstStageId);
+      }
 
-    // Create Notification in Zanpeople
-    await prisma.$executeRawUnsafe(`
-      INSERT INTO notifications (id, type, message, reference_type, reference_id, is_read, created_at)
-      VALUES (gen_random_uuid(), 'CANDIDATE_ADDED', $1, 'CANDIDATE', $2::uuid, false, NOW())
-    `, `New application received for ${job.title} from ${profile.fullName}`, candidateId);
+      // Create Notification in Zanpeople
+      await tx.$executeRawUnsafe(`
+        INSERT INTO notifications (id, type, message, reference_type, reference_id, is_read, created_at)
+        VALUES (gen_random_uuid(), 'CANDIDATE_ADDED', $1, 'CANDIDATE', $2::uuid, false, NOW())
+      `, `New application received for ${job.title} from ${profile.fullName}`, candidateId);
+    });
 
     // Create local Job Application record
     const application = await prisma.portalJobApplication.create({
