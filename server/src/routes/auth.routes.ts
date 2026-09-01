@@ -51,7 +51,7 @@ router.post('/register', authLimiter, upload.single('resume'), async (req: Reque
           },
         });
 
-        await sendOtpEmail(email, otp, 'verification');
+        sendOtpEmail(email, otp, 'verification').catch(console.error);
         res.status(200).json({ message: 'Account exists but unverified. A new OTP has been sent to your email.' });
         return;
       }
@@ -79,7 +79,7 @@ router.post('/register', authLimiter, upload.single('resume'), async (req: Reque
     const resumeUrl = `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileName}`;
 
     // Hash password
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(password, 10);
 
     // Create user and profile draft in a transaction
     const user = await prisma.$transaction(async (tx) => {
@@ -138,7 +138,7 @@ router.post('/register', authLimiter, upload.single('resume'), async (req: Reque
       },
     });
 
-    await sendOtpEmail(email, otp, 'verification');
+    sendOtpEmail(email, otp, 'verification').catch(console.error);
 
     res.status(201).json({
       message: 'Registration successful! Please check your email for the verification OTP.',
@@ -369,7 +369,7 @@ router.post('/forgot-password', otpLimiter, async (req: Request, res: Response) 
       },
     });
 
-    await sendOtpEmail(email, otp, 'reset');
+    sendOtpEmail(email, otp, 'reset').catch(console.error);
 
     res.json({ message: 'If an account exists with this email, an OTP has been sent.' });
   } catch (err) {
@@ -424,7 +424,7 @@ router.post('/reset-password', authLimiter, async (req: Request, res: Response) 
       data: { used: true },
     });
 
-    const passwordHash = await bcrypt.hash(newPassword, 12);
+    const passwordHash = await bcrypt.hash(newPassword, 10);
     await prisma.portalUser.update({
       where: { id: user.id },
       data: { passwordHash, failedLoginAttempts: 0, lockedUntil: null },
@@ -471,7 +471,7 @@ router.post('/resend-otp', otpLimiter, async (req: Request, res: Response) => {
     });
 
     const emailPurpose = purpose === 'EMAIL_VERIFICATION' ? 'verification' : 'reset';
-    await sendOtpEmail(email, otp, emailPurpose);
+    sendOtpEmail(email, otp, emailPurpose).catch(console.error);
 
     res.json({ message: 'A new OTP has been sent to your email.' });
   } catch (err) {
