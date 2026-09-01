@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { navigation } from '../utils/navigation';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 
@@ -26,7 +27,7 @@ api.interceptors.response.use(
       localStorage.removeItem('career_portal_token');
       localStorage.removeItem('career_portal_user');
       if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
-        window.location.href = '/login';
+        navigation.redirectTo('/login');
       }
     }
     return Promise.reject(error);

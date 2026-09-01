@@ -70,10 +70,6 @@ export default function Dashboard() {
   };
 
   const handleApplyClick = (jobId, jobTitle) => {
-    if (!profile?.isComplete) {
-      toast.error('Please complete your profile first!');
-      return;
-    }
     setApplyingTo(jobId);
     setApplyingJobTitle(jobTitle);
     setShowPreviewModal(true);
